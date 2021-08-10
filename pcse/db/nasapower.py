@@ -7,6 +7,7 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 import requests
+from requests import ReadTimeout
 
 from ..base import WeatherDataProvider, WeatherDataContainer
 from ..util import ea_from_tdew, reference_ET, check_angstromAB
@@ -72,7 +73,8 @@ class NASAPowerWeatherDataProvider(WeatherDataProvider):
     angstA = 0.29
     angstB = 0.49
 
-    def __init__(self, latitude, longitude, force_update=False, ETmodel="PM"):
+    def __init__(self, latitude, longitude, start_date: dt.datetime, end_date: dt.datetime, req_timeout: float,
+                 force_update=False, ETmodel="PM"):
 
         WeatherDataProvider.__init__(self)
 
@@ -85,6 +87,9 @@ class NASAPowerWeatherDataProvider(WeatherDataProvider):
 
         self.latitude = float(latitude)
         self.longitude = float(longitude)
+        self.start_date = start_date
+        self.end_date = end_date
+        self.req_timeout = req_timeout
         self.ETmodel = ETmodel
         msg = "Retrieving weather data from NASA Power for lat/lon: (%f, %f)."
         self.logger.info(msg % (self.latitude, self.longitude))
@@ -205,9 +210,6 @@ class NASAPowerWeatherDataProvider(WeatherDataProvider):
         """Query the NASA Power server for data on given latitude/longitude
         """
 
-        start_date = dt.date(1983,7,1)
-        end_date = dt.date.today()
-
         # build URL for retrieving data
         server = "https://power.larc.nasa.gov/cgi-bin/v1/DataAccess.py"
         payload = {"request": "execute",
@@ -215,8 +217,8 @@ class NASAPowerWeatherDataProvider(WeatherDataProvider):
                    "parameters": ",".join(self.power_variables),
                    "lat": latitude,
                    "lon": longitude,
-                   "startDate": start_date.strftime("%Y%m%d"),
-                   "endDate": end_date.strftime("%Y%m%d"),
+                   "startDate": self.start_date.strftime("%Y%m%d"),
+                   "endDate": self.end_date.strftime("%Y%m%d"),
                    "userCommunity": "AG",
                    "tempAverage": "DAILY",
                    "outputList": "JSON",
@@ -224,7 +226,10 @@ class NASAPowerWeatherDataProvider(WeatherDataProvider):
                    }
         msg = "Starting retrieval from NASA Power"
         self.logger.debug(msg)
-        req = requests.get(server, params=payload)
+        try:
+            req = requests.get(server, params=payload, timeout=self.req_timeout)
+        except ReadTimeout as e:
+            raise ReadTimeout("Can not to get weather from NASA by timeout")
 
         if req.status_code != self.HTTP_OK:
             msg = ("Failed retrieving POWER data, server returned HTTP " +
